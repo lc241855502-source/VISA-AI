@@ -2,7 +2,6 @@ import streamlit as st
 import os
 import json
 import uuid
-import re
 from datetime import datetime, date
 import pandas as pd
 from PIL import Image
@@ -35,80 +34,6 @@ VISA_TYPES = [
     "加拿大访问签证",
     "英国标准访客签证"
 ]
-
-# ==================== OCR护照识别模块 ====================
-@st.cache_resource(show_spinner=False)
-def load_ocr_model():
-    """加载OCR模型（仅英文数字，识别护照MRZ码）"""
-    import easyocr
-    return easyocr.Reader(['en'], gpu=False)
-
-def parse_mrz(mrz_lines):
-    """解析护照MRZ机读码，返回个人信息"""
-    result = {}
-    if len(mrz_lines) < 2:
-        return result
-    
-    line1 = mrz_lines[0].strip().replace(' ', '')
-    line2 = mrz_lines[1].strip().replace(' ', '')
-    
-    # 解析第二行（核心信息）
-    if len(line2) >= 44:
-        # 护照号
-        result['passport_no'] = line2[0:9].replace('<', '')
-        # 出生日期 YYMMDD
-        birth_str = line2[13:19]
-        try:
-            year = int(birth_str[0:2])
-            year += 1900 if year > 20 else 2000
-            result['birth_date'] = f"{year}-{birth_str[2:4]}-{birth_str[4:6]}"
-        except:
-            pass
-        # 性别
-        result['gender'] = '男' if line2[20] == 'M' else '女' if line2[20] == 'F' else ''
-        # 护照有效期 YYMMDD
-        expiry_str = line2[21:27]
-        try:
-            year = int(expiry_str[0:2])
-            year += 1900 if year > 20 else 2000
-            result['expiry_date'] = f"{year}-{expiry_str[2:4]}-{expiry_str[4:6]}"
-        except:
-            pass
-    
-    # 解析第一行（姓名）
-    if len(line1) >= 44:
-        name_part = line1[5:].split('<<')[0]
-        names = name_part.split('<')
-        if len(names) >= 2:
-            result['last_name_en'] = names[0].title()
-            result['first_name_en'] = ''.join(names[1:]).title()
-            result['full_name_en'] = f"{result['last_name_en']} {result['first_name_en']}"
-    
-    return result
-
-def recognize_passport(image):
-    """识别护照图片并提取信息"""
-    try:
-        reader = load_ocr_model()
-        img = Image.open(image)
-        import numpy as np
-        img_np = np.array(img)
-        
-        # OCR识别
-        results = reader.readtext(img_np, detail=0, paragraph=False)
-        
-        # 筛选MRZ行（包含<<的行）
-        mrz_lines = []
-        for line in results:
-            if '<<' in line and len(line) > 30:
-                clean_line = re.sub(r'[^A-Z0-9<]', '', line.upper())
-                mrz_lines.append(clean_line)
-        
-        # 取最长的两行
-        mrz_lines = sorted(mrz_lines, key=len, reverse=True)[:2]
-        return parse_mrz(mrz_lines), mrz_lines
-    except Exception as e:
-        return {}, []
 
 # ==================== 邮件通知模块 ====================
 def send_notice_email(app_data):
@@ -210,49 +135,21 @@ def user_submission_page():
     visa_type = st.selectbox("选择签证类型 *", VISA_TYPES)
     st.divider()
     
-    # 护照上传与识别
+    # 护照信息
     st.subheader("一、护照信息")
     passport_file = st.file_uploader("上传护照首页照片 *", type=["jpg", "jpeg", "png"], key="passport_upload")
-    
-    col_btn1, col_btn2 = st.columns([1, 5])
-    with col_btn1:
-        recognize_btn = st.button("🔍 一键识别信息", disabled=passport_file is None)
-    
-    if 'ocr_result' not in st.session_state:
-        st.session_state.ocr_result = {}
-    
-    if recognize_btn and passport_file:
-        with st.spinner("正在识别护照信息..."):
-            info, mrz = recognize_passport(passport_file)
-            st.session_state.ocr_result = info
-            if info:
-                st.success("识别成功！信息已自动填充下方，可手动修正")
-            else:
-                st.warning("未能识别到完整信息，请手动填写")
-    
-    st.markdown("---")
+    st.caption("请上传清晰的护照首页照片，用于资料存档")
     
     col1, col2 = st.columns(2)
-    ocr = st.session_state.ocr_result
-    
     with col1:
-        name_cn = st.text_input("中文姓名 *", value="")
-        name_en = st.text_input("英文姓名（拼音大写）*", value=ocr.get('full_name_en', ''))
-        gender = st.selectbox("性别 *", ["男", "女"], index=0 if ocr.get('gender') == '男' else 1 if ocr.get('gender') == '女' else 0)
-        
-        birth_default = ocr.get('birth_date', '1990-01-01')
-        try:
-            birth_date = st.date_input("出生日期 *", value=date.fromisoformat(birth_default))
-        except:
-            birth_date = st.date_input("出生日期 *")
+        name_cn = st.text_input("中文姓名 *")
+        name_en = st.text_input("英文姓名（拼音大写）*")
+        gender = st.selectbox("性别 *", ["男", "女"])
+        birth_date = st.date_input("出生日期 *")
     
     with col2:
-        passport_no = st.text_input("护照号码 *", value=ocr.get('passport_no', ''))
-        expiry_default = ocr.get('expiry_date', '2030-01-01')
-        try:
-            passport_expiry = st.date_input("护照有效期至 *", value=date.fromisoformat(expiry_default))
-        except:
-            passport_expiry = st.date_input("护照有效期至 *")
+        passport_no = st.text_input("护照号码 *")
+        passport_expiry = st.date_input("护照有效期至 *")
         phone = st.text_input("手机号码 *")
         email = st.text_input("电子邮箱 *")
     
@@ -380,8 +277,6 @@ def user_submission_page():
                 st.toast("邮件通知已发送", icon="📧")
             else:
                 st.warning(f"邮件发送失败：{msg}，但申请已保存")
-            
-            st.session_state.ocr_result = {}
 
 # ==================== 管理员后台 ====================
 def admin_page():
@@ -501,7 +396,7 @@ def main():
         admin_page()
     
     st.sidebar.divider()
-    st.sidebar.caption("签证资料收集系统 v2.0")
+    st.sidebar.caption("签证资料收集系统 v2.1（稳定版）")
 
 if __name__ == "__main__":
     main()
